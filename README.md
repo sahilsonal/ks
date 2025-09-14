@@ -72,6 +72,8 @@ npm run dev
 # 3) Build for production
 npm run build
 
+# 4) Preview the production build
+npm run preview
 
 FOLDER STRUCTURE 
 khel-saarthi/
@@ -87,6 +89,3 @@ khel-saarthi/
 ├─ postcss.config.js
 ├─ tailwind.config.js
 └─ vite.config.js
-
-# 4) Preview the production build
-npm run preview
