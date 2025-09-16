@@ -732,21 +732,28 @@ export default function App() {
 
   function onVideo(file, finalMetric) {
     if (view.name !== "upload") return;
-    setView({ name: "processing", athlete: view.athlete, testId: view.testId, fileName: file.name });
+    setView({ 
+  name: "processing", 
+  athlete: view.athlete, 
+  testId: view.testId, 
+  fileName: file.name,
+  metrics: finalMetric   
+});
+
 
     setTimeout(() => {
       const test = getTestOrFallback(view.testId);
 
-      // Prefer live metric from MediaPipe if available, else fallback
-            // Prefer metric passed from camera stop; else last live; else fallback
-      let metric = null;
-      if (finalMetric && finalMetric.testId === view.testId) {
-        metric = { value: finalMetric.value ?? 0, unit: finalMetric.unit ?? "reps" };
-      } else if (liveMetric && liveMetric.testId === view.testId) {
-        metric = { value: liveMetric.value, unit: liveMetric.unit };
-      } else {
-        metric = fakeScoreFor(view.testId);
-      }
+      // Prefer metric passed from camera stop; else last live; else fallback
+let metric = null;
+if (finalMetric && finalMetric.testId === view.testId) {
+  metric = { value: finalMetric.value ?? 0, unit: finalMetric.unit ?? "reps" };
+} else if (liveMetric && liveMetric.testId === view.testId) {
+  metric = { value: liveMetric.value, unit: liveMetric.unit };
+} else {
+  metric = fakeScoreFor(view.testId);
+}
+
 
 
       const prevOfSame = history.filter((h) => h.athlete === view.athlete && h.testId === view.testId).at(-1);
