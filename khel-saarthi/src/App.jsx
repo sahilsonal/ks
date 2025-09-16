@@ -483,7 +483,7 @@ useEffect(() => {
     const blob = new Blob(chunksRef.current, { type: "video/webm" });
     const file = new File([blob], generateRecordingFilename(), { type: "video/webm" });
     chunksRef.current = [];
-    onVideoReady(file);
+    onVideoReady(file, metric);
   };
 
   // start recording
@@ -730,7 +730,7 @@ export default function App() {
     setView({ name: "home", athlete });
   }
 
-  function onVideo(file) {
+  function onVideo(file, finalMetric) {
     if (view.name !== "upload") return;
     setView({ name: "processing", athlete: view.athlete, testId: view.testId, fileName: file.name });
 
@@ -738,12 +738,16 @@ export default function App() {
       const test = getTestOrFallback(view.testId);
 
       // Prefer live metric from MediaPipe if available, else fallback
+            // Prefer metric passed from camera stop; else last live; else fallback
       let metric = null;
-      if (liveMetric && liveMetric.testId === view.testId) {
+      if (finalMetric && finalMetric.testId === view.testId) {
+        metric = { value: finalMetric.value ?? 0, unit: finalMetric.unit ?? "reps" };
+      } else if (liveMetric && liveMetric.testId === view.testId) {
         metric = { value: liveMetric.value, unit: liveMetric.unit };
       } else {
         metric = fakeScoreFor(view.testId);
       }
+
 
       const prevOfSame = history.filter((h) => h.athlete === view.athlete && h.testId === view.testId).at(-1);
       const consistency = fakeConsistency(prevOfSame?.stageBreakdown.find((s) => s.stage === "Consistency")?.score ?? null);
