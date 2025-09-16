@@ -217,29 +217,26 @@ useEffect(() => {
   }
   function evalJumpingJacks(lm) {
   const R = (i) => lm?.[i] ? { x: lm[i].x, y: lm[i].y } : null;
-  const leftWrist = R(15), rightWrist = R(16);
-  const leftAnkle = R(27), rightAnkle = R(28);
-  const leftShoulder = R(11), rightShoulder = R(12);
-  const headRef = R(0) || R(7) || R(8);
+  const Lw = R(15), Rw = R(16);
+  const La = R(27), Ra = R(28);
+  const Ls = R(11), Rs = R(12);
+  const head = R(0) || R(7) || R(8);
 
-  const shoulderW = dist(leftShoulder, rightShoulder);
-  if (!evalRef.current.baseShoulderWidth && shoulderW) {
-    evalRef.current.baseShoulderWidth = shoulderW;
-  }
+  // shoulder width baseline (smoothed)
+  const sh = (Ls && Rs) ? dist(Ls, Rs) : 0;
+  const s = evalRef.current;
+  if (sh) s.baseShoulderWidth = s.baseShoulderWidth ? (0.9 * s.baseShoulderWidth + 0.1 * sh) : sh;
 
-  const feetApart =
-    dist(leftAnkle, rightAnkle) >=
-    1.4 * (evalRef.current.baseShoulderWidth || shoulderW || 0);
-
-  const handsUp =
-    !!headRef && leftWrist?.y < headRef.y && rightWrist?.y < headRef.y;
+  const base = s.baseShoulderWidth || sh || 0;
+  const feetApart = base && dist(La, Ra) >= 1.25 * base; // was 1.4 (too strict)
+  const handsUp = !!head && Lw?.y < head.y - 0.02 && Rw?.y < head.y - 0.02;
 
   const t = performance.now();
-  const s = evalRef.current;
+  const debounce = 220; // ms
 
-  if (s.jState === "closed" && feetApart && handsUp && t - s.jLast > 200) {
+  if (s.jState === "closed" && feetApart && handsUp && t - s.jLast > debounce) {
     s.jState = "open"; s.jLast = t;
-  } else if (s.jState === "open" && !feetApart && !handsUp && t - s.jLast > 200) {
+  } else if (s.jState === "open" && !feetApart && !handsUp && t - s.jLast > debounce) {
     s.jState = "closed"; s.jLast = t; s.jReps += 1;
   }
 
@@ -251,21 +248,45 @@ useEffect(() => {
   });
 }
 
+
   function evalPlank(lm) {
-    const R = (i) => lm?.[i] ? { x: lm[i].x, y: lm[i].y } : null;
-    const shoulder = R(12), hip = R(24), ankle = R(28);
-    const hipLine = angleDeg(shoulder, hip, ankle);
-    const good = hipLine > 165 && hipLine < 195;
-    const now = performance.now(); const s = evalRef.current;
-    if (good) {
-      if (!s.pGood) { s.pGood = true; s.pStart = now; }
+  const G = (i) => (lm?.[i] ? { x: lm[i].x, y: lm[i].y } : null);
+  const Sh = G(12) || G(11);
+  const Hp = G(24) || G(23);
+  const An = G(28) || G(27);
+
+  const s = evalRef.current;
+
+  const lineDeg = angleDeg(Sh, Hp, An); // 180° = straight
+  const midYA = (Sh?.y + An?.y) / 2;
+  const hipCentered = Sh && Hp && An ? Math.abs(Hp.y - midYA) <= 0.045 : false;
+
+  // not too strict: ±12° window + hip centered
+  const good = lineDeg >= 168 && lineDeg <= 192 && hipCentered;
+
+  const now = performance.now();
+  const gateMs = 400; // need ~0.4s of good form before timer starts
+
+  if (good) {
+    if (!s.pGood) { s.pGood = true; s.pGate = now; s.pStart = null; }
+    if (!s.pStart && now - s.pGate >= gateMs) s.pStart = now;
+    if (s.pStart) {
       const sec = (now - s.pStart) / 1000;
-      s.pMax = Math.max(s.pMax, sec);
-    } else {
-      s.pGood = false; s.pStart = null;
+      s.pMax = Math.max(s.pMax || 0, sec);
     }
-    emitLiveMetric({ testId: "plank", value: Math.floor(s.pMax), unit: "s", extras: { good }});
+  } else {
+    // pause when form breaks; keep max
+    s.pGood = false; s.pGate = null; s.pStart = null;
   }
+
+  emitLiveMetric({
+    testId: "plank",
+    value: Math.floor(s.pMax || 0),
+    unit: "s",
+    extras: { good },
+  });
+}
+
   function detect(lm) {
   switch (testId) {
     case "pushups":       return evalPushups(lm);
@@ -424,7 +445,9 @@ useEffect(() => {
     // jumping jacks
     jState: "closed", jLast: 0, jReps: 0, baseShoulderWidth: null,
     // plank
-    pStart: null, pMax: 0, pGood: false,
+    // plank init inside evalRef.current = { ... }
+   pStart: null, pMax: 0, pGood: false, pGate: null,
+
   };
   setLocalLiveMetric(null);
 
@@ -570,7 +593,7 @@ useEffect(() => {
           </>
         ) : (
           <div className="text-white/80 text-sm p-4 text-center">
-            Camera preview will appear here. If blocked or unsupported, use the Upload option below.
+            Camera preview will appear here. If blocked or unsupported, Please allow Permission.
           </div>
         )}
       </div>
@@ -578,6 +601,7 @@ useEffect(() => {
         <button onClick={initCamera} className="py-3 rounded-2xl border border-gray-300 active:scale-95">
           {stream ? "Refresh Camera" : "Enable Camera"}
         </button>
+
         {recording ? (
           <button onClick={stopRecording} className="py-3 rounded-2xl bg-red-500 text-white active:scale-95">
             Stop & Save
@@ -599,16 +623,7 @@ useEffect(() => {
 
         )}
       </div>
-      <div className="text-center text-xs text-gray-500">or</div>
-      <label className="block">
-        <div className="w-full rounded-2xl border border-dashed border-gray-300 p-4 text-center cursor-pointer active:scale-[.99]">
-          <div className="text-sm font-medium">Upload video</div>
-          <div className="text-xs text-gray-500">MP4 / MOV / WEBM</div>
-        </div>
-        <input type="file" accept="video/*" className="hidden"
-          onChange={(e) => { const f = e.target.files?.[0];
-           if (f) onVideoReady(f); }} />
-      </label>
+      
     </div>
   );
 }
@@ -927,11 +942,25 @@ export default function App() {
               <li>{toRenderableText(test.desc, "Follow on-screen instructions.")}</li>
               <li>Place the phone in a stable position with full body in frame.</li>
               <li>Good lighting improves recognition quality.</li>
+            {view.testId === "plank" && (
+  <li>
+    <span className="font-medium">How plank is counted:</span> Timer starts only when your
+    body is straight (shoulder–hip–ankle aligned) and steady ~0.4s; it pauses if form breaks.
+  </li>
+)}
+
+{view.testId === "jumpingjacks" && (
+  <li>
+    <span className="font-medium">How it counts:</span> Start CLOSED (feet together, hands down)
+    → FULLY OPEN (feet wide + both wrists above head) → back to CLOSED. Hold ~0.25s each.
+  </li>
+)}
+
             </ul>
           </div>
           <button onClick={() => setView({ name: "upload", athlete: view.athlete, testId: view.testId })}
             className="w-full py-3 rounded-2xl bg-emerald-600 text-white font-medium active:scale-95">
-            Start – Upload / Record
+            Start – Record
           </button>
         </main>
       </div>
@@ -942,13 +971,35 @@ export default function App() {
     const test = getTestOrFallback(view.testId);
     return (
       <div className="min-h-dvh bg-white">
-        <AppHeader title={`Upload – ${toRenderableText(test.title, "Test")}`}
+        <AppHeader title={`Record – ${toRenderableText(test.title, "Test")}`}
           onBack={() => setView({ name: "test", athlete: view.athlete, testId: view.testId })}
           profile={profile}
           onProfile={()=> setView({ name: "candidateHub", profile: profile || {name: view.athlete, gender: "", age: null} })} />
         <main className="mx-auto max-w-md px-4 py-5 space-y-5">
-          <VideoCapture testId={view.testId} onLiveMetric={setLiveMetric} onVideoReady={onVideo} />
-          <div className="text-xs text-gray-500 text-center">Tip: Short clips (5–15s) are enough for the demo.</div>
+          {view.testId === "sprint100m" ? (
+  <div className="rounded-2xl border border-gray-200 p-4 bg-amber-50">
+    <div className="font-semibold mb-1">100m Sprint — GPS Mode (coming soon)</div>
+    <ul className="list-disc pl-5 text-sm text-amber-800 space-y-1">
+      <li>Turn ON GPS on your phone.</li>
+      <li>Keep the phone with you and run 100m on a straight track.</li>
+      <li>Video capture is disabled for this drill in Level 1.</li>
+    </ul>
+    <div className="text-xs text-amber-700 mt-2">(Future update: automatic timing using GPS + IMU)</div>
+  </div>
+) : (
+  <>
+    <VideoCapture
+      testId={view.testId}
+      onLiveMetric={setLiveMetric}
+      onVideoReady={onVideo}
+    />
+    <div className="text-xs text-gray-500 text-center">
+      Tip: Short clips (5–15s) are enough for the demo.
+    </div>
+  </>
+)}
+
+
         </main>
       </div>
     );
@@ -1020,39 +1071,55 @@ export default function App() {
           </div>
 
           {!hasSai ? (
-            <div className="rounded-2xl border border-amber-300 bg-amber-50 p-4">
-              <div className="font-semibold">Wait for SAI scorecard</div>
-              <div className="text-sm text-amber-700">Percentile will be available soon. Tap refresh to fetch the demo scorecard.</div>
-              <button onClick={attachSaiToLatest} className="mt-3 w-full py-3 rounded-2xl bg-amber-600 text-white active:scale-95">Refresh SAI Scorecard</button>
-            </div>
-          ) : (
-            <div className="rounded-2xl border border-gray-200 p-4 bg-emerald-50">
-              <div className="font-semibold mb-1">SAI Evaluation (Demo)</div>
-              <div className="text-sm">Percentile: <span className="font-semibold">{r.sai.l1Percentile}th</span></div>
+  <div className="rounded-2xl border border-amber-300 bg-amber-50 p-4">
+    <div className="font-semibold">Wait for SAI scorecard</div>
+    {!allDone ? (
+      <div className="text-sm text-amber-700">
+        Complete all Level 1 drills and then refresh to view your percentile.
+      </div>
+    ) : (
+      <>
+        <div className="text-sm text-amber-700">
+          All L1 drills completed. Tap refresh to fetch the demo percentile.
+        </div>
+        <button
+          onClick={attachSaiToLatest}
+          className="mt-3 w-full py-3 rounded-2xl bg-amber-600 text-white active:scale-95"
+        >
+          Refresh SAI Scorecard
+        </button>
+      </>
+    )}
+  </div>
+) : (
+  <div className="rounded-2xl border border-gray-200 p-4 bg-emerald-50">
+    <div className="font-semibold mb-1">SAI Evaluation (Demo)</div>
+    <div className="text-sm">Percentile: <span className="font-semibold">{r.sai.l1Percentile}th</span></div>
 
-              {!allDone ? (
-                <>
-                  <div className="text-sm mt-2 text-emerald-800">
-                    Complete all Level 1 drills to unlock Level 2.
-                  </div>
-                  {missingTitles.length > 0 && (
-                    <div className="mt-2 text-xs text-gray-700">
-                      Remaining: {missingTitles.join(", ")}
-                    </div>
-                  )}
-                  <button onClick={toHomeFromAnywhere}
-                    className="mt-3 w-full py-3 rounded-2xl border border-gray-300 active:scale-95">
-                    Do Remaining Level 1 Drills
-                  </button>
-                </>
-              ) : (
-                <button onClick={() => setView({ name: "saiGate", athlete: r.athlete, summary: r })}
-                  className="mt-3 w-full py-3 rounded-2xl bg-emerald-600 text-white active:scale-95">
-                  Continue to Level 2 Drills
-                </button>
-              )}
-            </div>
-          )}
+    {!allDone ? (
+      <>
+        <div className="text-sm mt-2 text-emerald-800">
+          Complete all Level 1 drills to unlock Level 2.
+        </div>
+        {missingTitles.length > 0 && (
+          <div className="mt-2 text-xs text-gray-700">
+            Remaining: {missingTitles.join(", ")}
+          </div>
+        )}
+        <button onClick={toHomeFromAnywhere}
+          className="mt-3 w-full py-3 rounded-2xl border border-gray-300 active:scale-95">
+          Do Remaining Level 1 Drills
+        </button>
+      </>
+    ) : (
+      <button onClick={() => setView({ name: "saiGate", athlete: r.athlete, summary: r })}
+        className="mt-3 w-full py-3 rounded-2xl bg-emerald-600 text-white active:scale-95">
+        Continue to Level 2 Drills
+      </button>
+    )}
+  </div>
+)}
+
 
           <div className="grid grid-cols-2 gap-3">
             <button onClick={toHomeFromAnywhere} className="py-3 rounded-2xl border border-gray-300 active:scale-95">New Test</button>
