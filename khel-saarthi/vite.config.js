@@ -1,9 +1,13 @@
-import { defineConfig } from "vite";
-import react from "@vitejs/plugin-react";
+import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
+import mkcert from 'vite-plugin-mkcert'
 
-// If you deploy under a subpath (e.g. GitHub Pages repo "khel-saarthi"),
-// set base: "/khel-saarthi/" and rebuild.
+// https dev-server + LAN expose
 export default defineConfig({
-  plugins: [react()],
-  // base: "/khel-saarthi/",
-});
+  plugins: [react(), mkcert()],
+  server: {
+    https: true,   // camera access https
+    host: true,    // same network devices (mobile) access via lan
+    port: 5173     // default port
+  }
+})

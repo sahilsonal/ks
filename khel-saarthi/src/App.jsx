@@ -26,7 +26,12 @@ function angleDeg(A, B, C) {
   const cos = Math.min(1, Math.max(-1, dot / (mag1 * mag2)));
   return (Math.acos(cos) * 180) / Math.PI;
 }
-function dist(A, B) { if (!A || !B) return 0; return Math.hypot(A.x - B.x, A.y - B.y); }
+
+function dist(A, B) {
+  if (!A || !B) return 0;
+  return Math.hypot(A.x - B.x, A.y - B.y);
+}
+
 
 // ---------- Safe Catalog ----------
 const DEFAULT_TESTS = [
@@ -132,6 +137,21 @@ function VideoCapture({ onVideoReady, testId, onLiveMetric }) {
   // MediaPipe
   const poseRef = useRef(null);
   const rafRef = useRef(0);
+  // make loop stoppable + throttle overlay
+
+const lastOverlayTsRef = useRef(0);
+
+// portrait preview toggle (9:16)
+const [portrait, setPortrait] = useState(true);
+
+// overlay state: frame color, hip horizon, distance hint, posture tip
+const [overlay, setOverlay] = useState({ frame: "bad", hipY: null, hint: "", posture: "" });
+
+// 60s timer
+const [timerMs, setTimerMs] = useState(0);
+const timerRef = useRef(null);
+
+  const aliveRef = useRef(false);
 
   // Live metric overlay
   const [liveMetric, setLocalLiveMetric] = useState(null);
@@ -148,9 +168,18 @@ function VideoCapture({ onVideoReady, testId, onLiveMetric }) {
     pStart: null, pMax: 0, pGood: false,
   });
 
-  useEffect(() => {
-    return () => { if (stream) stream.getTracks().forEach((t) => t.stop()); cancelAnimationFrame(rafRef.current); };
-  }, [stream]);
+useEffect(() => {
+  return () => {
+    aliveRef.current = false;
+    cancelAnimationFrame(rafRef.current);
+    if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+    try { poseRef.current?.close?.(); } catch {}
+    if (stream) stream.getTracks().forEach((t) => t.stop());
+    poseRef.current = null;
+  };
+}, [stream]);
+
+
 
   function emitLiveMetric(m) {
     setLocalLiveMetric(m);
@@ -238,15 +267,74 @@ function VideoCapture({ onVideoReady, testId, onLiveMetric }) {
     emitLiveMetric({ testId: "plank", value: Math.floor(s.pMax), unit: "s", extras: { good }});
   }
   function detect(lm) {
-    if (!testId || !lm) return;
-    switch (testId) {
-      case "pushups": evalPushups(lm); break;
-      case "squats": evalSquats(lm); break;
-      case "jumpingjacks": evalJumpingJacks(lm); break;
-      case "plank": evalPlank(lm); break;
-      default: break; // sprint100m ignored in pose eval
+  switch (testId) {
+    case "pushups":       return evalPushups(lm);
+    case "squats":        return evalSquats(lm);
+    case "jumpingjacks":  return evalJumpingJacks(lm);
+    case "plank":         return evalPlank(lm);
+    default:              return;
+  }
+}
+
+ function updateOverlay(lm) {
+  const now = performance.now();
+  if (now - lastOverlayTsRef.current < 100) return; // ~10 Hz
+  lastOverlayTsRef.current = now;
+
+  // landmarks → bbox
+  const pts = lm?.filter(Boolean) || [];
+  if (!pts.length) return;
+  let minX = 1, minY = 1, maxX = 0, maxY = 0;
+  for (const p of pts) {
+    if (p.x < minX) minX = p.x; if (p.y < minY) minY = p.y;
+    if (p.x > maxX) maxX = p.x; if (p.y > maxY) maxY = p.y;
+  }
+
+  // green ROI (loose margins, advisory only)
+  const roi = portrait
+    ? { L: 0.10, R: 0.90, T: 0.06, B: 0.94 }   // more vertical space
+    : { L: 0.12, R: 0.88, T: 0.08, B: 0.92 };
+
+  let frame = "bad";
+  const insideX = minX >= roi.L && maxX <= roi.R;
+  const insideY = minY >= roi.T && maxY <= roi.B;
+  if (insideX && insideY) frame = "good";
+  else if (
+    minX >= roi.L - 0.03 && maxX <= roi.R + 0.03 &&
+    minY >= roi.T - 0.03 && maxY <= roi.B + 0.03
+  ) frame = "ok";
+
+  // horizon line at mid-hips
+  const LHIP = lm[23], RHIP = lm[24];
+  const hipY = (LHIP && RHIP) ? (LHIP.y + RHIP.y) / 2 : (LHIP?.y ?? RHIP?.y ?? null);
+
+  // distance hint using shoulder width
+  const LSH = lm[11], RSH = lm[12];
+  const shoulderW = (LSH && RSH) ? Math.hypot(LSH.x - RSH.x, LSH.y - RSH.y) : 0;
+  const roiW = roi.R - roi.L;
+  let hint = "";
+  if (shoulderW) {
+    const rel = shoulderW / roiW;           // how much of ROI width shoulders cover
+    if (rel > 0.36) hint = "Step back";
+    else if (rel < 0.16) hint = "Step closer";
+  }
+
+  // posture chip (only for squats)
+  let posture = "";
+  if (testId === "squats") {
+    const HIP = lm[24] || lm[23], KNEE = lm[26] || lm[25], ANK = lm[28] || lm[27];
+    if (HIP && KNEE && ANK) {
+      // reuse your angle logic
+      const kneeAng = angleDeg(HIP, KNEE, ANK);
+      if (kneeAng > 130) posture = "Go lower";
+      else if (kneeAng < 95) posture = "Rise up";
+      else posture = "Good";
     }
   }
+
+  setOverlay({ frame, hipY, hint, posture });
+}
+
 
   async function ensurePoseLoaded() {
     if (POSE_MODE === "off") return false;
@@ -280,20 +368,28 @@ function VideoCapture({ onVideoReady, testId, onLiveMetric }) {
     }
   }
 
-  async function runLoop() {
-    try {
-      if (!videoRef.current) { rafRef.current = requestAnimationFrame(runLoop); return; }
-      if (!poseRef.current)  { rafRef.current = requestAnimationFrame(runLoop); return; }
-      if (videoRef.current.readyState < 2) { rafRef.current = requestAnimationFrame(runLoop); return; }
-      const now = performance.now();
-      const res = await poseRef.current.detectForVideo(videoRef.current, now);
-      if (res?.landmarks?.[0]) detect(res.landmarks[0]);
-    } catch (e) {
-      // swallow any runtime errors so UI never blanks
-    } finally {
-      rafRef.current = requestAnimationFrame(runLoop);
+ async function runLoop() {
+  if (!aliveRef.current) return;
+
+  try {
+    if (!videoRef.current || !poseRef.current || videoRef.current.readyState < 2) {
+      rafRef.current = aliveRef.current ? requestAnimationFrame(runLoop) : 0;
+      return;
     }
+    const now = performance.now();
+    const res = await poseRef.current.detectForVideo(videoRef.current, now);
+    const lm = res?.landmarks?.[0];
+    if (lm) {
+      updateOverlay(lm);   // ← new overlay info
+      detect(lm);          // ← your existing counter logic
+    }
+  } catch (e) {
+    // swallow errors
+  } finally {
+    if (aliveRef.current) rafRef.current = requestAnimationFrame(runLoop);
   }
+}
+
 
   async function initCamera() {
     try {
@@ -307,6 +403,7 @@ function VideoCapture({ onVideoReady, testId, onLiveMetric }) {
           // Lazy-load pose AFTER camera is live
           await ensurePoseLoaded();
           cancelAnimationFrame(rafRef.current);
+          aliveRef.current = true;
           runLoop();
         };
       }
@@ -316,52 +413,160 @@ function VideoCapture({ onVideoReady, testId, onLiveMetric }) {
   }
 
   function startRecording() {
-    if (!stream || typeof window.MediaRecorder === "undefined") return;
-    // reset evaluators
-    evalRef.current = { phase: "top", lastToggle: 0, reps: 0, sPhase: "top", sLast: 0, sReps: 0, jState: "closed", jLast: 0, jReps: 0, baseShoulderWidth: null, pStart: null, pMax: 0, pGood: false };
-    setLocalLiveMetric(null);
+  if (!stream || typeof window.MediaRecorder === "undefined") return;
 
+  // reset evaluators
+  evalRef.current = {
+    // pushups
+    phase: "top", lastToggle: 0, reps: 0,
+    // squats
+    sPhase: "top", sLast: 0, sReps: 0,
+    // jumping jacks
+    jState: "closed", jLast: 0, jReps: 0, baseShoulderWidth: null,
+    // plank
+    pStart: null, pMax: 0, pGood: false,
+  };
+  setLocalLiveMetric(null);
+
+  // prepare recorder
+  chunksRef.current = [];
+  const mr = new MediaRecorder(stream, { mimeType: "video/webm" });
+  mediaRecorderRef.current = mr;
+
+  mr.ondataavailable = (e) => {
+    if (e.data && e.data.size > 0) chunksRef.current.push(e.data);
+  };
+
+  mr.onstop = () => {
+    // stop loop & timer so UI is responsive and metric is final
+    aliveRef.current = false;
+    cancelAnimationFrame(rafRef.current);
+    if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+
+    // snapshot final metric at stop
+    let metric = null;
+    if (testId === "plank") {
+      metric = { testId: "plank", value: Math.floor(evalRef.current.pMax || 0), unit: "s" };
+    } else if (testId === "pushups") {
+      metric = { testId: "pushups", value: evalRef.current.reps, unit: "reps" };
+    } else if (testId === "squats") {
+      metric = { testId: "squats", value: evalRef.current.sReps, unit: "reps" };
+    } else if (testId === "jumpingjacks") {
+      metric = { testId: "jumpingjacks", value: evalRef.current.jReps, unit: "reps" };
+    }
+    if (metric) emitLiveMetric(metric);
+
+    // create file and continue flow
+    const blob = new Blob(chunksRef.current, { type: "video/webm" });
+    const file = new File([blob], generateRecordingFilename(), { type: "video/webm" });
     chunksRef.current = [];
-    const mr = new MediaRecorder(stream, { mimeType: "video/webm" });
-    mediaRecorderRef.current = mr;
-    mr.ondataavailable = (e) => { if (e.data && e.data.size > 0) chunksRef.current.push(e.data); };
-    mr.onstop = () => {
-      const blob = new Blob(chunksRef.current, { type: "video/webm" });
-      const file = new File([blob], generateRecordingFilename(), { type: "video/webm" });
+    onVideoReady(file);
+  };
 
-      // finalize live metric if applicable
-      if (testId === "plank") {
-        const sec = Math.floor(evalRef.current.pMax || 0);
-        emitLiveMetric({ testId: "plank", value: sec, unit: "s" });
-      } else if (testId === "pushups") {
-        emitLiveMetric({ testId: "pushups", value: evalRef.current.reps, unit: "reps" });
-      } else if (testId === "squats") {
-        emitLiveMetric({ testId: "squats", value: evalRef.current.sReps, unit: "reps" });
-      } else if (testId === "jumpingjacks") {
-        emitLiveMetric({ testId: "jumpingjacks", value: evalRef.current.jReps, unit: "reps" });
+  // start recording
+  mr.start();
+  setRecording(true);
+
+  // 60s auto-stop timer
+  if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+  setTimerMs(0);
+  timerRef.current = setInterval(() => {
+    setTimerMs((t) => {
+      const next = t + 1000;
+      if (next >= 60000) {
+        clearInterval(timerRef.current); timerRef.current = null;
+        stopRecording();
       }
-      onVideoReady(file);
-    };
-    mr.start();
-    setRecording(true);
-  }
+      return next;
+    });
+  }, 1000);
+}
+
+
+  
 
   function stopRecording() {
-    mediaRecorderRef.current?.stop();
-    setRecording(false);
-  }
+  if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+  mediaRecorderRef.current?.stop();
+  setRecording(false);
+}
+
 
   return (
     <div className="space-y-3">
-      <div className="rounded-2xl overflow-hidden bg-black aspect-video relative flex items-center justify-center">
+      <div className={`rounded-2xl overflow-hidden bg-black ${portrait ? "aspect-[9/16]" : "aspect-video"} relative flex items-center justify-center`}>
+
         {streamSupported ? (
           <>
             <video ref={videoRef} autoPlay playsInline muted className="w-full h-full object-cover" />
-            {liveMetric && (
-              <div className="absolute bottom-2 right-2 bg-white/85 backdrop-blur px-3 py-1 rounded-xl text-xs shadow">
-                <span className="font-semibold">{liveMetric.testId}</span>: {liveMetric.value} {liveMetric.unit}
-              </div>
-            )}
+
+  {/* Portrait/Landscape toggle */}
+  <button
+    onClick={() => setPortrait((p) => !p)}
+    className="absolute top-2 left-2 px-2 py-1 text-[11px] rounded-lg bg-white/80 backdrop-blur shadow pointer-events-auto"
+    title="Toggle Portrait/Landscape"
+  >
+    {portrait ? "Portrait 9:16" : "Landscape 16:9"}
+  </button>
+
+  {/* ROI box (advisory only) */}
+  <div className="absolute inset-0 pointer-events-none">
+    <div
+      className={`absolute rounded-xl border-2 ${overlay.frame === "good" ? "border-emerald-500"
+        : overlay.frame === "ok" ? "border-amber-500" : "border-rose-500"}`}
+      style={{
+        left: portrait ? "10%" : "12%", right: portrait ? "10%" : "12%",
+        top: portrait ? "6%" : "8%", bottom: portrait ? "6%" : "8%"
+      }}
+    />
+  </div>
+
+  {/* Horizon line at hips */}
+  {overlay.hipY != null && (
+    <div className="absolute left-0 right-0 pointer-events-none"
+         style={{ top: `${overlay.hipY * 100}%` }}>
+      <div className="h-0.5 bg-emerald-400/80"></div>
+    </div>
+  )}
+
+  {/* Distance hint */}
+  {overlay.hint && (
+    <div className="absolute top-2 right-2 text-[11px] bg-white/85 px-2 py-1 rounded-lg shadow">
+      {overlay.hint}
+    </div>
+  )}
+
+  {/* Posture chip (e.g., squats) */}
+  {overlay.posture && (
+    <div className="absolute bottom-2 left-1/2 -translate-x-1/2 text-[12px] bg-white/85 px-3 py-1 rounded-full shadow">
+      {overlay.posture}
+    </div>
+  )}
+
+  {/* 60s timer */}
+  {recording && (
+    <div className="absolute top-2 inset-x-0 flex items-center justify-center pointer-events-none">
+      <div className="flex items-center gap-2 bg-black/35 text-white text-xs px-2 py-1 rounded-lg">
+        <span>
+          {String(Math.floor(timerMs / 60000)).padStart(2, "0")}:
+          {String(Math.floor((timerMs % 60000) / 1000)).padStart(2, "0")}
+        </span>
+        {/* simple progress ring */}
+        <svg width="20" height="20" viewBox="0 0 36 36" className="block">
+          <circle cx="18" cy="18" r="16" fill="none" stroke="rgba(255,255,255,0.25)" strokeWidth="4" />
+          <circle cx="18" cy="18" r="16" fill="none"
+            stroke="white" strokeWidth="4" strokeLinecap="round"
+            strokeDasharray={`${(timerMs / 60000) * 100} 100`} transform="rotate(-90 18 18)" />
+        </svg>
+      </div>
+    </div>
+  )}
+
+  {liveMetric && (
+    <div className="absolute bottom-2 right-2 bg-white/85 backdrop-blur px-3 py-1 rounded-xl text-xs shadow">
+      <span className="font-semibold">{liveMetric.testId}</span>: {liveMetric.value} {liveMetric.unit}
+    </div>
+  )}
           </>
         ) : (
           <div className="text-white/80 text-sm p-4 text-center">
@@ -378,10 +583,20 @@ function VideoCapture({ onVideoReady, testId, onLiveMetric }) {
             Stop & Save
           </button>
         ) : (
-          <button onClick={startRecording} disabled={!stream}
-            className={`py-3 rounded-2xl text-white active:scale-95 ${stream ? "bg-emerald-600" : "bg-gray-300"}`}>
-            Record
-          </button>
+          <button
+  onClick={startRecording}
+  disabled={!stream}
+  className={
+    "py-3 rounded-2xl text-white active:scale-95 " +
+    (stream
+      ? "bg-emerald-600 hover:bg-emerald-700"
+      : "bg-gray-400 cursor-not-allowed")
+  }
+>
+  Record
+</button>
+
+
         )}
       </div>
       <div className="text-center text-xs text-gray-500">or</div>
@@ -391,7 +606,8 @@ function VideoCapture({ onVideoReady, testId, onLiveMetric }) {
           <div className="text-xs text-gray-500">MP4 / MOV / WEBM</div>
         </div>
         <input type="file" accept="video/*" className="hidden"
-          onChange={(e) => { const f = e.target.files?.[0]; if (f) onVideoReady(f); }} />
+          onChange={(e) => { const f = e.target.files?.[0];
+           if (f) onVideoReady(f); }} />
       </label>
     </div>
   );
