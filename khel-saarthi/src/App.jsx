@@ -41,6 +41,12 @@ const DEFAULT_TESTS = [
   { id: "jumpingjacks", title: "Jumping Jacks (30s)",      desc: "Max full-extension jumping jacks in 30 seconds.",metric: "reps",    icon: "⭐" },
   { id: "plank",        title: "Forearm Plank Hold",       desc: "Hold a straight plank as long as possible.",     metric: "seconds", icon: "📏" },
 ];
+// --- Drill instruction art (public URLs) ---
+const TEST_ART = {
+  pushups: "/drills/push-up.png",
+  plank: "/drills/plank-hold.png",
+};
+
 
 function sanitizeTestsCatalog(input) {
   if (!Array.isArray(input)) return DEFAULT_TESTS.slice();
@@ -938,45 +944,77 @@ if (finalMetric && finalMetric.testId === view.testId) {
     );
   }
 
-  if (view.name === "test") {
-    const test = getTestOrFallback(view.testId);
-    return (
-      <div className="min-h-dvh bg-white">
-        <AppHeader title={toRenderableText(test.title, "Test")}
-          onBack={() => setView({ name: "home", athlete: view.athlete })}
-          profile={profile}
-          onProfile={()=> setView({ name: "candidateHub", profile: profile || {name: view.athlete, gender: "", age: null} })} />
-        <main className="mx-auto max-w-md px-4 py-5 space-y-5">
-          <div className="rounded-2xl bg-gray-50 border border-gray-200 p-4">
-            <div className="font-semibold mb-1">Instructions</div>
-            <ul className="text-sm text-gray-700 list-disc pl-5 space-y-1">
-              <li>{toRenderableText(test.desc, "Follow on-screen instructions.")}</li>
-              <li>Place the phone in a stable position with full body in frame.</li>
-              <li>Good lighting improves recognition quality.</li>
+if (view.name === "test") {
+  const test = getTestOrFallback(view.testId);
+  return (
+    <div className="min-h-dvh bg-white">
+      <AppHeader
+        title={toRenderableText(test.title, "Test")}
+        onBack={() => setView({ name: "home", athlete: view.athlete })}
+        profile={profile}
+        onProfile={() =>
+          setView({
+            name: "candidateHub",
+            profile: profile || { name: view.athlete, gender: "", age: null },
+          })
+        }
+      />
+      <main className="mx-auto max-w-md px-4 py-5 space-y-5">
+        {/* ---------- Instructions Card ---------- */}
+        <div className="rounded-2xl bg-gray-50 border border-gray-200 p-4">
+          <div className="font-semibold mb-1">Instructions</div>
+          <ul className="text-sm text-gray-700 list-disc pl-5 space-y-1">
+            <li>{toRenderableText(test.desc, "Follow on-screen instructions.")}</li>
+            <li>Place the phone in a stable position with full body in frame.</li>
+            <li>Good lighting improves recognition quality.</li>
+
+            {/* Extra tip for Push-ups & Plank */}
+            {(view.testId === "pushups" || view.testId === "plank") && (
+              <li>
+                Rotate your phone to <b>landscape</b>, turn on <b>Auto-rotate</b>, then{" "}
+                <b>refresh</b> once for clearer detection.
+              </li>
+            )}
+
+            {/* Plank-specific rule */}
             {view.testId === "plank" && (
-  <li>
-    <span className="font-medium">How plank is counted:</span> Timer starts only when your
-    body is straight (shoulder–hip–ankle aligned) and steady ~0.4s; it pauses if form breaks.
-  </li>
-)}
+              <li>
+                <span className="font-medium">How plank is counted:</span> Timer starts only when
+                your body is straight (shoulder–hip–ankle aligned) and steady ~0.4s; it pauses if
+                form breaks.
+              </li>
+            )}
+          </ul>
+        </div>
+        {/* ---------- /Instructions Card ---------- */}
 
-{view.testId === "jumpingjacks" && (
-  <li>
-    <span className="font-medium">How it counts:</span> Start CLOSED (feet together, hands down)
-    → FULLY OPEN (feet wide + both wrists above head) → back to CLOSED. Hold ~0.25s each.
-  </li>
-)}
-
-            </ul>
+        {/* ---------- Instruction art (only for Push-ups & Plank) ---------- */}
+        {(view.testId === "pushups" || view.testId === "plank") && (
+          <div className="rounded-2xl border border-gray-200 bg-white p-2">
+            <div className="w-full aspect-video max-h-64 overflow-hidden flex items-center justify-center">
+              <img
+                src={view.testId === "plank" ? "/drills/plank-hold.png" : "/drills/push-up.png"}
+                alt={`${test.title} guide`}
+                loading="lazy"
+                className="w-full h-full object-contain"
+              />
+            </div>
           </div>
-          <button onClick={() => setView({ name: "upload", athlete: view.athlete, testId: view.testId })}
-            className="w-full py-3 rounded-2xl bg-emerald-600 text-white font-medium active:scale-95">
-            Start – Record
-          </button>
-        </main>
-      </div>
-    );
-  }
+        )}
+        {/* ---------- /Instruction art ---------- */}
+
+        {/* Start button */}
+        <button
+          onClick={() => setView({ name: "upload", athlete: view.athlete, testId: view.testId })}
+          className="w-full py-3 rounded-2xl bg-emerald-600 text-white font-medium active:scale-95"
+        >
+          Start – Record
+        </button>
+      </main>
+    </div>
+  );
+}
+
 
   if (view.name === "upload") {
     const test = getTestOrFallback(view.testId);
