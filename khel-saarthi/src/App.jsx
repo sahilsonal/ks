@@ -960,57 +960,98 @@ if (view.name === "test") {
         }
       />
       <main className="mx-auto max-w-md px-4 py-5 space-y-5">
-        {/* ---------- Instructions Card ---------- */}
-        <div className="rounded-2xl bg-gray-50 border border-gray-200 p-4">
-          <div className="font-semibold mb-1">Instructions</div>
-          <ul className="text-sm text-gray-700 list-disc pl-5 space-y-1">
-            <li>{toRenderableText(test.desc, "Follow on-screen instructions.")}</li>
-            <li>Place the phone in a stable position with full body in frame.</li>
-            <li>Good lighting improves recognition quality.</li>
+  {view.testId === "sprint100m" ? (
+    <>
+      {/* Sprint special card */}
+      <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4">
+        <div className="font-semibold mb-1">100m Sprint — GPS Mode</div>
+        <ul className="list-disc pl-5 text-sm text-amber-800 space-y-1">
+          <li>Turn ON GPS on your phone.</li>
+          <li>Keep the phone with you and run 100m on a straight track.</li>
+          <li>Video capture is disabled for this drill in Level 1.</li>
+        </ul>
+        <div className="text-xs text-amber-700 mt-2">(Future: automatic timing using GPS + IMU)</div>
+      </div>
 
-            {/* Extra tip for Push-ups & Plank */}
-            {(view.testId === "pushups" || view.testId === "plank") && (
-              <li>
-                Rotate your phone to <b>landscape</b>, turn on <b>Auto-rotate</b>, then{" "}
-                <b>refresh</b> once for clearer detection.
-              </li>
-            )}
+      {/* Fake Start button to mark sprint done */}
+      <button
+        onClick={() => {
+          markL1Completed(view.athlete, "sprint100m");
+          alert("100m Sprint marked complete (demo). Finish the other drills to unlock Level 2.");
+          setView({ name: "home", athlete: view.athlete });
+        }}
+        className="w-full py-3 rounded-2xl bg-emerald-600 text-white font-medium active:scale-95"
+      >
+        Mark Sprint as Done
+      </button>
+    </>
+  ) : (
+    <>
+      {/* ---------- Instructions Card ---------- */}
+      <div className="rounded-2xl bg-gray-50 border border-gray-200 p-4">
+        <div className="font-semibold mb-1">Instructions</div>
+        <ul className="text-sm text-gray-700 list-disc pl-5 space-y-1">
+          <li>{toRenderableText(test.desc, "Follow on-screen instructions.")}</li>
+          <li>Place the phone in a stable position with full body in frame.</li>
+          <li>Good lighting improves recognition quality.</li>
 
-            {/* Plank-specific rule */}
-            {view.testId === "plank" && (
-              <li>
-                <span className="font-medium">How plank is counted:</span> Timer starts only when
-                your body is straight (shoulder–hip–ankle aligned) and steady ~0.4s; it pauses if
-                form breaks.
-              </li>
-            )}
-          </ul>
-        </div>
-        {/* ---------- /Instructions Card ---------- */}
+          {/* Jumping Jacks-specific rule */}
+          {view.testId === "jumpingjacks" && (
+            <li>
+              <span className="font-medium">How it counts:</span> Start <b>CLOSED</b> (feet together, hands down) → 
+              go <b>FULLY OPEN</b> (feet wide + both wrists above head) → back to <b>CLOSED</b>. 
+              Hold ~0.25s each for proper counting.
+            </li>
+          )}
 
-        {/* ---------- Instruction art (only for Push-ups & Plank) ---------- */}
-        {(view.testId === "pushups" || view.testId === "plank") && (
-          <div className="rounded-2xl border border-gray-200 bg-white p-2">
-            <div className="w-full aspect-video max-h-64 overflow-hidden flex items-center justify-center">
-              <img
-                src={view.testId === "plank" ? "/drills/plank-hold.png" : "/drills/push-up.png"}
-                alt={`${test.title} guide`}
-                loading="lazy"
-                className="w-full h-full object-contain"
-              />
-            </div>
+          {/* Extra tip for Push-ups & Plank */}
+          {(view.testId === "pushups" || view.testId === "plank") && (
+            <li>
+              Rotate your phone to <b>landscape</b>, turn on <b>Auto-rotate</b>, then{" "}
+              <b>refresh</b> once for clearer detection.
+            </li>
+          )}
+
+          {/* Plank-specific rule */}
+          {view.testId === "plank" && (
+            <li>
+              <span className="font-medium">How plank is counted:</span> Timer starts only when
+              your body is straight (shoulder–hip–ankle aligned) and steady ~0.4s; it pauses if
+              form breaks.
+            </li>
+          )}
+        </ul>
+      </div>
+      {/* ---------- /Instructions Card ---------- */}
+
+      {/* ---------- Instruction art (only for Push-ups & Plank) ---------- */}
+      {(view.testId === "pushups" || view.testId === "plank") && (
+        <div className="rounded-2xl border border-gray-200 bg-white p-2">
+          <div className="w-full aspect-video max-h-64 overflow-hidden flex items-center justify-center">
+            <img
+              src={view.testId === "plank" ? "/drills/plank-hold.png" : "/drills/push-up.png"}
+              alt={`${test.title} guide`}
+              loading="lazy"
+              className="w-full h-full object-contain"
+            />
           </div>
-        )}
-        {/* ---------- /Instruction art ---------- */}
+        </div>
+      )}
+      {/* ---------- /Instruction art ---------- */}
 
-        {/* Start button */}
-        <button
-          onClick={() => setView({ name: "upload", athlete: view.athlete, testId: view.testId })}
-          className="w-full py-3 rounded-2xl bg-emerald-600 text-white font-medium active:scale-95"
-        >
-          Start – Record
-        </button>
-      </main>
+      {/* Start button */}
+      <button
+        onClick={() =>
+          setView({ name: "upload", athlete: view.athlete, testId: view.testId })
+        }
+        className="w-full py-3 rounded-2xl bg-emerald-600 text-white font-medium active:scale-95"
+      >
+        Start – Record
+      </button>
+    </>
+  )}
+</main>
+
     </div>
   );
 }
